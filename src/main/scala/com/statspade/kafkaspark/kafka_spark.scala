@@ -8,6 +8,9 @@ import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.spark.streaming.kafka010._
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions.explode
+
 
 
 
@@ -26,9 +29,11 @@ val kafkaParams = Map[String, Object](
   "enable.auto.commit" -> (false: java.lang.Boolean)
 )
 logger.info(kafkaParams.toString())
-val conf = new SparkConf()
+  val spark = SparkSession.builder.getOrCreate()
+//val conf = new SparkConf()
 //val conf = new SparkConf().setMaster("Local[*]").setAppName("APP")
-val ssc = new StreamingContext(conf, Seconds(1))
+val ssc = new StreamingContext(spark.sparkContext, Seconds(1))
+
 val topics = Array(LoadProperties.prop.getProperty("consumer_topics"))
 val stream = KafkaUtils.createDirectStream[String, String](
   ssc,
@@ -36,9 +41,29 @@ val stream = KafkaUtils.createDirectStream[String, String](
   org.apache.spark.streaming.kafka010.ConsumerStrategies.Subscribe[String, String](topics, kafkaParams)
 )
 
-val rec=stream.map(record => (record.key, record.value))
+  
 
-rec.print()
+val rec=stream.map(record => ( record.value))
+rec.foreachRDD(x=>{
+  
+  val new_rec=x.filter(y=>y.contains("id"))
+ 
+  val a = spark.read.json(new_rec)
+try
+  {
+val req_dat=a.select("user.id","user.name","user.location","user.followers_count","user.friends_count","user.listed_count","user.favourites_count","user.statuses_count","user.created_at","user.lang")
+req_dat.write.mode("append")
+  .format("com.databricks.spark.csv")
+  .option("header", "false")
+  .save(LoadProperties.prop.getProperty("hdfs-path"))
+  }
+  catch
+  {
+    case e:Exception => logger.error("Data Error:", e.getMessage+a.collect())
+
+  
+}})
+
 ssc.start()
 ssc.awaitTermination()
 
